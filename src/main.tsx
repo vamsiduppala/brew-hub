@@ -41,7 +41,15 @@ Devvit.addCustomPostType({
           const category = msg.category;
           // Retrieve from Reddit's built-in Redis Key-Value Store
           const cachedIdeas = await context.kvStore.get(`brew-category-${category}`);
-          let ideas = cachedIdeas ? JSON.parse(cachedIdeas) : [];
+          let ideas: any[] = [];
+          if (cachedIdeas) {
+            try {
+              const parsed = JSON.parse(cachedIdeas);
+              ideas = Array.isArray(parsed) ? parsed : (parsed.ideas || []);
+            } catch (e) {
+              console.error("Failed to parse cached ideas:", e);
+            }
+          }
           
           if (ideas.length === 0) {
             const mockIdeas = await import("./data/mock-ideas.json");
@@ -62,7 +70,9 @@ Devvit.addCustomPostType({
             const cachedIdeas = await context.kvStore.get(`brew-category-${cat.slug}`);
             if (cachedIdeas) {
               try {
-                allIdeas.push(...JSON.parse(cachedIdeas));
+                const parsed = JSON.parse(cachedIdeas);
+                const list = Array.isArray(parsed) ? parsed : (parsed.ideas || []);
+                allIdeas.push(...list);
               } catch (e) {}
             }
           }
@@ -76,6 +86,154 @@ Devvit.addCustomPostType({
             type: "ALL_IDEAS_RESPONSE",
             ideas: allIdeas
           });
+        }
+
+        if (msg.type === "REFRESH_CATEGORY") {
+          const category = msg.category;
+          const apiKey = await context.settings.get("gemini_api_key");
+          if (!apiKey) {
+            postMessage({
+              type: "REFRESH_ERROR",
+              category,
+              error: "Gemini API key is not configured. Please set it in App Settings."
+            });
+            return;
+          }
+
+          const categories = await import("./data/categories.json");
+          const cat = categories.default.find((c: any) => c.slug === category);
+          if (!cat) {
+            postMessage({
+              type: "REFRESH_ERROR",
+              category,
+              error: "Category not found."
+            });
+            return;
+          }
+
+          console.log(`Natively crawling r/ subreddits for category: ${cat.name}`);
+          let rawThreads: any[] = [];
+          
+          for (const sub of cat.subreddits) {
+            try {
+              const posts = await context.reddit.getHotPosts({
+                subredditName: sub,
+                limit: 4
+              }).all();
+              
+              for (const post of posts) {
+                rawThreads.push({
+                  title: post.title,
+                  text: post.selftext ? post.selftext.substring(0, 800) : "",
+                  score: post.score,
+                  subreddit: sub,
+                  url: post.url
+                });
+              }
+            } catch (err) {
+              console.error(`Failed to crawl r/${sub}:`, err);
+            }
+          }
+
+          if (rawThreads.length === 0) {
+            postMessage({
+              type: "REFRESH_ERROR",
+              category,
+              error: `Could not fetch any threads from subreddits: ${cat.subreddits.join(", ")}`
+            });
+            return;
+          }
+
+          const prompt = (
+            "Generate 6 distinct, startable Idea Cards based on these raw Reddit threads. "
+            "Each card must conform strictly to the Pydantic schema structure. "
+            "Do not frame things as complaints. Capture 'the tea' in a fun, encouraging tone.\n\n"
+            `Input Threads:\n${JSON.stringify(rawThreads)}`
+          );
+
+          try {
+            const response = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  contents: [{ parts: [{ text: prompt }] }],
+                  generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                      type: "object",
+                      properties: {
+                        ideas: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            properties: {
+                              id: { type: "string" },
+                              category: { type: "string" },
+                              title: { type: "string" },
+                              tagline: { type: "string" },
+                              whatItIs: { type: "string" },
+                              momentum: { type: "string" },
+                              momentumScore: { type: "number" },
+                              momentumWhy: { type: "string" },
+                              difficulty: { type: "string" },
+                              whyNow: { type: "string" },
+                              theTea: { type: "string" },
+                              whoIsDoingIt: { type: "string" },
+                              gettingStarted: { type: "array", items: { type: "string" } },
+                              tags: { type: "array", items: { type: "string" } },
+                              sources: {
+                                type: "array",
+                                items: {
+                                  type: "object",
+                                  properties: {
+                                    title: { type: "string" },
+                                    url: { type: "string" },
+                                    subreddit: { type: "string" },
+                                    upvotes: { type: "number" },
+                                    numComments: { type: "number" }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                })
+              }
+            );
+
+            if (response.ok) {
+              const result = await response.json();
+              const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+              if (text) {
+                const parsed = JSON.parse(text);
+                const ideasList = parsed.ideas || parsed;
+                await context.kvStore.put(`brew-category-${category}`, JSON.stringify(ideasList));
+                postMessage({
+                  type: "IDEAS_RESPONSE",
+                  category,
+                  ideas: ideasList
+                });
+                return;
+              }
+            }
+            postMessage({
+              type: "REFRESH_ERROR",
+              category,
+              error: "Failed to parse Gemini API response."
+            });
+          } catch (err: any) {
+            console.error(`Failed to refresh ideas for ${cat.name} via Gemini:`, err);
+            postMessage({
+              type: "REFRESH_ERROR",
+              category,
+              error: err.message || "An error occurred while calling Gemini."
+            });
+          }
         }
       }
     });
@@ -209,9 +367,14 @@ Devvit.addSchedulerJob({
           const result = await response.json();
           const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
           if (text) {
-            // Write decoded ideas straight to Reddit's Redis database
-            await context.kvStore.put(`brew-category-${cat.slug}`, text);
-            console.log(`Updated ideas for ${cat.name} in Redis.`);
+            try {
+              const parsed = JSON.parse(text);
+              const ideasList = parsed.ideas || parsed;
+              await context.kvStore.put(`brew-category-${cat.slug}`, JSON.stringify(ideasList));
+              console.log(`Updated ideas for ${cat.name} in Redis.`);
+            } catch (e) {
+              console.error(`Failed to parse/save ideas for ${cat.name}:`, e);
+            }
           }
         }
       } catch (err) {

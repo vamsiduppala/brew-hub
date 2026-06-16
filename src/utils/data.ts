@@ -2,7 +2,10 @@ import { IdeaCardData } from "@/components/IdeaCard";
 import categories from "@/data/categories.json";
 import mockIdeas from "@/data/mock-ideas.json";
 
-let categoryCallbacks: Record<string, (ideas: IdeaCardData[]) => void> = {};
+let categoryCallbacks: Record<string, {
+  resolve: (ideas: IdeaCardData[]) => void;
+  reject: (err: Error) => void;
+}> = {};
 let allIdeasCallback: ((ideas: IdeaCardData[]) => void) | null = null;
 
 // Listen for message events sent by the parent Reddit Devvit app container
@@ -13,7 +16,15 @@ if (typeof window !== "undefined") {
       if (data.type === "IDEAS_RESPONSE") {
         const category = data.category;
         if (categoryCallbacks[category]) {
-          categoryCallbacks[category](data.ideas);
+          categoryCallbacks[category].resolve(data.ideas);
+          delete categoryCallbacks[category];
+        }
+      }
+      if (data.type === "REFRESH_ERROR") {
+        const category = data.category;
+        if (categoryCallbacks[category]) {
+          categoryCallbacks[category].reject(new Error(data.error || "Failed to refresh."));
+          delete categoryCallbacks[category];
         }
       }
       if (data.type === "ALL_IDEAS_RESPONSE") {
@@ -28,10 +39,8 @@ if (typeof window !== "undefined") {
 export async function getIdeasForCategory(slug: string): Promise<IdeaCardData[]> {
   // Check if running inside Reddit WebView iframe
   if (typeof window !== "undefined" && window.parent !== window) {
-    return new Promise((resolve) => {
-      categoryCallbacks[slug] = (ideas) => {
-        resolve(ideas);
-      };
+    return new Promise((resolve, reject) => {
+      categoryCallbacks[slug] = { resolve, reject };
       window.parent.postMessage({ type: "GET_IDEAS", category: slug }, "*");
     });
   }
@@ -46,6 +55,16 @@ export async function getIdeasForCategory(slug: string): Promise<IdeaCardData[]>
       (idea) => idea.category === slug
     );
   }
+}
+
+export async function refreshCategory(slug: string): Promise<IdeaCardData[]> {
+  if (typeof window !== "undefined" && window.parent !== window) {
+    return new Promise((resolve, reject) => {
+      categoryCallbacks[slug] = { resolve, reject };
+      window.parent.postMessage({ type: "REFRESH_CATEGORY", category: slug }, "*");
+    });
+  }
+  throw new Error("Refresh is only supported when running inside Reddit WebView.");
 }
 
 export async function getAllIdeas(): Promise<IdeaCardData[]> {

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { ArrowLeft, SlidersHorizontal, Search, RotateCcw, HelpCircle } from "lucide-react";
+import { ArrowLeft, SlidersHorizontal, Search, RotateCcw, HelpCircle, RefreshCw } from "lucide-react";
 import IdeaCard, { IdeaCardData, IdeaCardSkeleton } from "@/components/IdeaCard";
 
 type CategoryContentProps = {
@@ -17,6 +17,7 @@ type CategoryContentProps = {
 };
 
 export default function CategoryContent({ category, initialIdeas }: CategoryContentProps) {
+  const [allIdeas, setAllIdeas] = useState<IdeaCardData[]>(initialIdeas);
   const [ideas, setIdeas] = useState<IdeaCardData[]>(initialIdeas);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDifficulty, setSelectedDifficulty] = useState<string[]>([]);
@@ -25,12 +26,37 @@ export default function CategoryContent({ category, initialIdeas }: CategoryCont
   const [isPending, startTransition] = useTransition();
   const [isLocalLoading, setIsLocalLoading] = useState(false);
 
+  // WebView Context Detection
+  const [isInReddit, setIsInReddit] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.parent !== window) {
+      setIsInReddit(true);
+    }
+  }, []);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    setRefreshError(null);
+    try {
+      const { refreshCategory } = await import("@/utils/data");
+      const freshIdeas = await refreshCategory(category.slug);
+      setAllIdeas(freshIdeas);
+    } catch (err: any) {
+      setRefreshError(err.message || "An error occurred during refresh.");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
   // Filter & Sort Logic
   useEffect(() => {
     setIsLocalLoading(true);
     const timer = setTimeout(() => {
       startTransition(() => {
-        let filtered = [...initialIdeas];
+        let filtered = [...allIdeas];
 
         // Search text filter
         if (searchQuery.trim() !== "") {
@@ -74,7 +100,7 @@ export default function CategoryContent({ category, initialIdeas }: CategoryCont
     }, 250); // Small delay to highlight the premium skeleton shimmers
 
     return () => clearTimeout(timer);
-  }, [searchQuery, selectedDifficulty, selectedMomentum, sortBy, initialIdeas]);
+  }, [searchQuery, selectedDifficulty, selectedMomentum, sortBy, allIdeas]);
 
   const toggleDifficulty = (difficulty: string) => {
     setSelectedDifficulty((prev) =>
@@ -107,23 +133,43 @@ export default function CategoryContent({ category, initialIdeas }: CategoryCont
           <span>Back to categories</span>
         </Link>
 
-        <div>
-          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">{category.name}</h1>
-          <p className="text-muted text-sm sm:text-base mt-2 max-w-3xl leading-relaxed">
-            {category.description}
-          </p>
-          {/* Seed subreddits sources */}
-          <div className="flex flex-wrap items-center gap-1.5 mt-3 text-xs text-muted">
-            <span className="font-semibold">Analyzed sources:</span>
-            {category.subreddits.map((sub) => (
-              <span
-                key={sub}
-                className="px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground border border-border/40 font-mono"
-              >
-                r/{sub}
-              </span>
-            ))}
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div className="space-y-2">
+            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight">{category.name}</h1>
+            <p className="text-muted text-sm sm:text-base max-w-2xl leading-relaxed">
+              {category.description}
+            </p>
+            {/* Seed subreddits sources */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 text-xs text-muted">
+              <span className="font-semibold">Analyzed sources:</span>
+              {category.subreddits.map((sub) => (
+                <span
+                  key={sub}
+                  className="px-2 py-0.5 rounded-md bg-secondary text-secondary-foreground border border-border/40 font-mono"
+                >
+                  r/{sub}
+                </span>
+              ))}
+            </div>
           </div>
+
+          {isInReddit && (
+            <div className="flex flex-col items-start sm:items-end gap-1.5 shrink-0 pt-1">
+              <button
+                disabled={isRefreshing}
+                onClick={handleRefresh}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl border border-primary bg-primary/10 hover:bg-primary/20 text-primary disabled:opacity-50 transition-all cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+                <span>{isRefreshing ? "Refreshing..." : "Refresh from Reddit"}</span>
+              </button>
+              {refreshError && (
+                <span className="text-[10px] text-destructive max-w-[200px] text-left font-medium">
+                  {refreshError}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
