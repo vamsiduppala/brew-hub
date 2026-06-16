@@ -1,0 +1,92 @@
+[
+  {
+    "id": "dev-1",
+    "category": "developer-tools",
+    "title": "GitLens for API Docs",
+    "tagline": "An IDE extension that overlays live API usage stats, deprecation warnings, and performance logs directly onto import statements.",
+    "whatItIs": "An editor extension that monitors API health and usage logs, displaying them directly inside your IDE next to external imports. It warns devs about deprecated endpoints or slow responses before writing API calls, saving debug time.",
+    "momentum": "Heating Up",
+    "momentumScore": 78,
+    "momentumWhy": "Active discussions on r/webdev and r/SaaS indicate developers are frustrated with fragmented external doc sites.",
+    "difficulty": "Intermediate",
+    "whyNow": "API ecosystems are expanding rapidly, and developers are looking for tools that bring context directly into their local development environment.",
+    "theTea": "Proponents argue this cuts down context-switching dramatically. Skeptics worry it will bloat the IDE and feel like spam if not highly configurable. Some debate whether this should be built as a standalone tool or a plugin for existing tools.",
+    "whoIsDoingIt": "Indie hackers building VS Code plugins, SaaS engineers working on developer experience tooling.",
+    "gettingStarted": [
+      "Build a basic VS Code extension that parses Javascript import statements.",
+      "Fetch and cache endpoint details from a public API spec (like Swagger/OpenAPI).",
+      "Render a simple hover overlay showing response times for that API."
+    ],
+    "tags": ["IDE", "VS Code", "API", "DX"],
+    "sources": [
+      {
+        "title": "Why do we still look at browser tabs for API docs?",
+        "url": "https://www.reddit.com/r/webdev/comments/api-docs-ide",
+        "subreddit": "webdev",
+        "upvotes": 342,
+        "numComments": 89
+      }
+    ],
+    "lastUpdated": "2026-06-15T08:00:00Z"
+  },
+  {
+    "id": "freelance-1",
+    "category": "freelancer-economy",
+    "title": "NomadContracts",
+    "tagline": "Compliant, localized contract generators for digital nomads working across international borders.",
+    "whatItIs": "A web application that generates legally sound client service agreements based on the freelancer's country and their client's jurisdiction. It handles complex details like tax residency, dispute resolution forums, and local payment rules.",
+    "momentum": "Hot",
+    "momentumScore": 89,
+    "momentumWhy": "Rising remote audit crackdowns and double-taxation fears discussed widely in r/digitalnomad and r/freelance.",
+    "difficulty": "Beginner",
+    "whyNow": "Tax authorities worldwide are introducing strict digital nomad visas and compliance rules, making standard contracts outdated.",
+    "theTea": "Freelancers love the peace of mind but wonder if generic legal templates can actually stand up in court. Legal tech builders debate how to keep local laws updated without expensive lawyer retainers—suggesting crowdsourced review or AI contract analysis.",
+    "whoIsDoingIt": "Bootstrapped solopreneurs, digital nomad bloggers partnering with remote-work lawyers.",
+    "gettingStarted": [
+      "Compile template contracts for 3 popular digital nomad hubs (e.g., Portugal, Bali, Mexico).",
+      "Build a multi-step form matching freelancer location to client location.",
+      "Generate a downloadable PDF draft contract using open-source templates."
+    ],
+    "tags": ["LegalTech", "Contracts", "Nomad", "Freelance"],
+    "sources": [
+      {
+        "title": "Tax agency audited me because of contract phrasing. Help!",
+        "url": "https://www.reddit.com/r/digitalnomad/comments/audit-tax-contract",
+        "subreddit": "digitalnomad",
+        "upvotes": 512,
+        "numComments": 142
+      }
+    ],
+    "lastUpdated": "2026-06-15T08:00:00Z"
+  },
+  {
+    "id": "ai-1",
+    "category": "ai-automation",
+    "title": "LocalLLM Agent Host",
+    "tagline": "A dead-simple desktop app that lets non-technical users download, run, and connect local AI assistants to local folders.",
+    "whatItIs": "A desktop dashboard that automates the installation of models like Llama-3 or Mistral. It provides a simple drag-and-drop interface where users can select a local directory and start chatting with their files completely offline.",
+    "momentum": "Emerging",
+    "momentumScore": 65,
+    "momentumWhy": "Explosion of interest in r/LocalLLaMA and r/automation regarding data privacy and offline-first AI workflows.",
+    "difficulty": "Advanced",
+    "whyNow": "Modern laptops (Apple Silicon, AI PCs) have sufficient NPU and unified memory to run highly capable small models at fast tokens-per-second.",
+    "theTea": "There is a major debate between using heavy, complex local frameworks (Ollama, LM Studio) versus building tiny native wrappers. Hardcore techies want raw command lines and configuration options, while business users just want a simple app that 'just works' on double-click.",
+    "whoIsDoingIt": "Privacy advocates, Electron/Tauri developers, open-source AI enthusiasts.",
+    "gettingStarted": [
+      "Create an Electron or Tauri skeleton app that detects local hardware specifications.",
+      "Write a wrapper script to fetch Ollama or a quantized GGUF model in the background.",
+      "Implement a basic local chat interface querying text files in a target directory."
+    ],
+    "tags": ["Local AI", "Privacy", "Desktop App", "Ollama"],
+    "sources": [
+      {
+        "title": "We need a local AI app that my grandpa could use",
+        "url": "https://www.reddit.com/r/LocalLLaMA/comments/simple-local-app",
+        "subreddit": "LocalLLaMA",
+        "upvotes": 820,
+        "numComments": 210
+      }
+    ],
+    "lastUpdated": "2026-06-15T08:00:00Z"
+  }
+]

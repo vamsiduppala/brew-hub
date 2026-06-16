@@ -1,101 +1,69 @@
 import { IdeaCardData } from "@/components/IdeaCard";
 import categories from "@/data/categories.json";
-import mockIdeas from "@/data/mock-ideas.json";
 
-let categoryCallbacks: Record<string, {
-  resolve: (ideas: IdeaCardData[]) => void;
-  reject: (err: Error) => void;
-}> = {};
-let allIdeasCallback: ((ideas: IdeaCardData[]) => void) | null = null;
-
-// Listen for message events sent by the parent Reddit Devvit app container
-if (typeof window !== "undefined") {
-  window.addEventListener("message", (event) => {
-    const data = event.data;
-    if (data) {
-      if (data.type === "IDEAS_RESPONSE") {
-        const category = data.category;
-        if (categoryCallbacks[category]) {
-          categoryCallbacks[category].resolve(data.ideas);
-          delete categoryCallbacks[category];
-        }
-      }
-      if (data.type === "REFRESH_ERROR") {
-        const category = data.category;
-        if (categoryCallbacks[category]) {
-          categoryCallbacks[category].reject(new Error(data.error || "Failed to refresh."));
-          delete categoryCallbacks[category];
-        }
-      }
-      if (data.type === "ALL_IDEAS_RESPONSE") {
-        if (allIdeasCallback) {
-          allIdeasCallback(data.ideas);
-        }
+// Helper to read database directly on server-side (used during build/SSR)
+function getServerIdeas(): IdeaCardData[] {
+  if (typeof window === "undefined") {
+    const fs = require("fs");
+    const path = require("path");
+    const dbPath = path.resolve(process.cwd(), "src/data/db.json");
+    if (fs.existsSync(dbPath)) {
+      try {
+        return JSON.parse(fs.readFileSync(dbPath, "utf8"));
+      } catch (e) {
+        console.error("Failed to parse db.json on server:", e);
       }
     }
-  });
+  }
+  return [];
 }
 
 export async function getIdeasForCategory(slug: string): Promise<IdeaCardData[]> {
-  // Check if running inside Reddit WebView iframe
-  if (typeof window !== "undefined" && window.parent !== window) {
-    return new Promise((resolve, reject) => {
-      categoryCallbacks[slug] = { resolve, reject };
-      window.parent.postMessage({ type: "GET_IDEAS", category: slug }, "*");
-    });
+  if (typeof window === "undefined") {
+    const all = getServerIdeas();
+    return all.filter((idea) => idea.category === slug);
   }
 
-  // Standalone mode: load statically
   try {
-    const module = await import(`@/data/${slug}.json`);
-    return module.default as IdeaCardData[];
+    const response = await fetch(`/api/ideas?category=${slug}`);
+    if (response.ok) {
+      return await response.json();
+    }
   } catch (error) {
-    // Fallback to mock data filtered by category
-    return (mockIdeas as IdeaCardData[]).filter(
-      (idea) => idea.category === slug
-    );
+    console.error(`Failed to fetch ideas for category ${slug}:`, error);
   }
+  return [];
 }
 
 export async function refreshCategory(slug: string): Promise<IdeaCardData[]> {
-  if (typeof window !== "undefined" && window.parent !== window) {
-    return new Promise((resolve, reject) => {
-      categoryCallbacks[slug] = { resolve, reject };
-      window.parent.postMessage({ type: "REFRESH_CATEGORY", category: slug }, "*");
-    });
+  const response = await fetch("/api/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category: slug })
+  });
+
+  if (response.ok) {
+    return await response.json();
+  } else {
+    const errData = await response.json();
+    throw new Error(errData.error || "Failed to refresh category.");
   }
-  throw new Error("Refresh is only supported when running inside Reddit WebView.");
 }
 
 export async function getAllIdeas(): Promise<IdeaCardData[]> {
-  // Check if running inside Reddit WebView iframe
-  if (typeof window !== "undefined" && window.parent !== window) {
-    return new Promise((resolve) => {
-      allIdeasCallback = (ideas) => {
-        resolve(ideas);
-      };
-      window.parent.postMessage({ type: "GET_ALL_IDEAS" }, "*");
-    });
+  if (typeof window === "undefined") {
+    return getServerIdeas();
   }
 
-  let allIdeas: IdeaCardData[] = [...(mockIdeas as IdeaCardData[])];
-  
-  for (const cat of categories) {
-    try {
-      const module = await import(`@/data/${cat.slug}.json`);
-      if (module && module.default) {
-        // Remove mock items for this category to avoid duplicates, then add real ones
-        allIdeas = [
-          ...allIdeas.filter((i) => i.category !== cat.slug),
-          ...(module.default as IdeaCardData[]),
-        ];
-      }
-    } catch (e) {
-      // JSON file doesn't exist yet, ignore and keep mock items
+  try {
+    const response = await fetch("/api/ideas");
+    if (response.ok) {
+      return await response.json();
     }
+  } catch (error) {
+    console.error("Failed to fetch all ideas:", error);
   }
-  
-  return allIdeas;
+  return [];
 }
 
 export async function getIdeaById(id: string): Promise<IdeaCardData | null> {
@@ -109,33 +77,10 @@ export async function getTrendingIdeas(): Promise<IdeaCardData[]> {
 }
 
 export async function getCategoryIdeaCounts(): Promise<Record<string, number>> {
-  if (typeof window !== "undefined" && window.parent !== window) {
-    const all = await getAllIdeas();
-    const counts: Record<string, number> = {};
-    for (const cat of categories) {
-      counts[cat.slug] = all.filter((i) => i.category === cat.slug).length;
-    }
-    return counts;
-  }
-
+  const all = await getAllIdeas();
   const counts: Record<string, number> = {};
-  
   for (const cat of categories) {
-    counts[cat.slug] = (mockIdeas as IdeaCardData[]).filter(
-      (idea) => idea.category === cat.slug
-    ).length;
+    counts[cat.slug] = all.filter((i) => i.category === cat.slug).length;
   }
-
-  for (const cat of categories) {
-    try {
-      const module = await import(`@/data/${cat.slug}.json`);
-      if (module && module.default) {
-        counts[cat.slug] = (module.default as IdeaCardData[]).length;
-      }
-    } catch (e) {
-      // file does not exist, keep mock count
-    }
-  }
-
   return counts;
 }
