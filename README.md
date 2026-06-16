@@ -20,18 +20,19 @@ This is an **idea hub, not a pain hub** — it focuses strictly on opportunities
 
 ## 🏗️ System Architecture
 
-Brew is built with a decoupled architecture:
+Brew is designed with two compatible deployment architectures:
 
-```
-[Reddit] ──> PRAW Fetcher (Python) ──> raw threads ──> Gemini Decoder (google-genai) 
-                                                                 │
-                                                                 ▼
-[Next.js Site] <── Cached static JSON files <── [src/data/{category_slug}.json]
-```
+### 1. Native Reddit Devvit App (Recommended)
+Runs entirely inside the Reddit ecosystem as an interactive custom post.
+- **No API Keys Required**: Fetches subreddit threads natively using the Devvit SDK client, bypassing standard OAuth limitations and rate limits.
+- **Native Scheduler**: Automatically refreshes ideas daily using Devvit's serverless Scheduler API.
+- **Redis KV Store**: Decoded ideas are saved inside Reddit's native Key-Value store and queried by the frontend WebView.
+- **Static Next.js Webview**: The Next.js frontend is compiled into a static site and hosted inside Reddit's iframe container.
 
-1. **Fetcher**: A Python crawler querying seed subreddits per category using PRAW. Features a robust public JSON fallback if developer keys are not configured.
-2. **Decoder**: A Gemini API wrapper (`google-genai` SDK) that parses raw threads into fully validated, structured `IdeaCard` JSON objects using Pydantic schemas.
-3. **Next.js Site**: A static App Router frontend that imports and serves the generated JSONs, creating a zero-dependency runtime with instant loading speeds.
+### 2. Standalone Next.js Site + Python Scraper
+- **Python Fetcher**: Crawls subreddits using PRAW (with a public JSON fallback).
+- **Gemini Decoder**: Calls Gemini using the `google-genai` SDK and Pydantic validation schemas.
+- **Next.js static site**: Serves categories from cached JSON files locally.
 
 ---
 
@@ -40,75 +41,65 @@ Brew is built with a decoupled architecture:
 ### 1. Requirements
 
 - **Node.js** (v18 or higher)
-- **Python** (3.11 or higher) with the Launcher (`py`)
+- **Python** (3.11 or higher)
 
-### 2. Environment Setup
+### 2. Install Dependencies
 
-Create a `.env` file in the root directory:
-
-```env
-# Reddit API Credentials (Optional: Crawler falls back to public JSON feeds if blank)
-REDDIT_CLIENT_ID=your_reddit_client_id
-REDDIT_CLIENT_SECRET=your_reddit_client_secret
-REDDIT_USER_AGENT=brew-idea-hub/1.0 by your_username
-
-# Google Gemini API Key (Required for scraping/simulating data)
-GEMINI_API_KEY=your_gemini_api_key
-```
-
-### 3. Install Dependencies
-
-Install the frontend npm packages:
+Install the frontend npm packages and Devvit bindings:
 ```bash
 npm install
 ```
 
-Install the Python pipeline requirements:
+Install the Python pipeline requirements (if using standalone mode):
 ```bash
 py -m pip install -r pipeline/requirements.txt
 ```
 
 ---
 
-## 🛠️ Local Commands
+## 🛠️ Devvit Deployment (Reddit Integration)
 
-### Run the Frontend Development Server
-Start the Next.js server locally (it will run on `http://localhost:3000` or `http://localhost:3001` if port 3000 is occupied):
+To deploy Brew directly onto Reddit as a Custom Post Web App:
+
+1. **Configure devvit.json**: Our `devvit.json` is pre-configured to use Next.js's static export folder `/out`.
+2. **Build the static frontend**:
+   ```bash
+   npm run build
+   ```
+3. **Log in to Reddit Developer CLI**:
+   ```bash
+   npx devvit login
+   ```
+4. **Register and upload your app**:
+   ```bash
+   npx devvit register brewideas
+   npx devvit upload
+   ```
+5. **Playtest inside your sub**:
+   Create an interactive custom post in your test subreddit:
+   ```bash
+   npx devvit playtest <your_subreddit_name>
+   ```
+
+When moderators install the app, the background trigger schedules a daily crawler that queries threads natively and refreshes the dashboard with zero server dependencies!
+
+---
+
+## 🛠️ Local Commands (Standalone Mode)
+
+### Run the Standalone Development Server
 ```bash
 npm run dev
 ```
 
-### Re-run the Scraper & Gemini Decoder
-Trigger the full PRAW and Gemini pipeline to crawl Reddit and rewrite category JSONs:
+### Run Python Scraper & Gemini Decoder
+Crawl Reddit and rewrite static JSON files locally:
 ```bash
 npm run refresh
 ```
 
 ### Run Gemini Simulation Generator (No Reddit Keys needed)
-If you do not have Reddit API credentials, you can populate all categories with 6 Gemini-synthesized startup ideas based on typical subreddit topics:
+Populate all categories with 6 Gemini-synthesized ideas based on typical subreddit topics:
 ```bash
 npm run refresh:dry
-```
-
----
-
-## 📂 Project Structure
-
-```
-brew/
-├── .env.example
-├── package.json
-├── pipeline/
-│   ├── requirements.txt
-│   ├── config.py           # Paths and env configurations
-│   ├── fetcher.py          # Reddit crawler with public fallback
-│   ├── decoder.py          # Gemini SDK structured JSON schema parser
-│   ├── run.py              # Main crawler runner
-│   └── populate_rich_mocks.py # Custom mock merger script
-└── src/
-    ├── app/                # Next.js App Router paths
-    ├── components/         # Framer motion & layout elements
-    ├── context/            # Light/Dark Theme providers
-    ├── data/               # Generated static category JSON files
-    └── utils/              # Dynamic data loading helper scripts
 ```

@@ -1,0 +1,10 @@
+run = "npm run dev"
+
+[nix]
+channel = "stable-23_11"
+
+[packager]
+language = "javascript"
+
+[entrypoint]
+run = "npm run dev"
