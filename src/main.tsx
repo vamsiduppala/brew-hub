@@ -1,5 +1,79 @@
 import { Devvit } from "@devvit/public-api";
 
+function decodeHTMLEntities(str: string): string {
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
+}
+
+function stripHTML(html: string): string {
+  let clean = html.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
+  clean = clean.replace(/<[^>]*?>/g, " ");
+  clean = clean.replace(/\s+/g, " ").trim();
+  return decodeHTMLEntities(clean);
+}
+
+function parseRedditRSS(xmlText: string): any[] {
+  const entries: any[] = [];
+  const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+  let match;
+  
+  while ((match = entryRegex.exec(xmlText)) !== null) {
+    const entryContent = match[1];
+    const titleMatch = entryContent.match(/<title>([\s\S]*?)<\/title>/);
+    const title = titleMatch ? decodeHTMLEntities(titleMatch[1]) : "";
+    
+    const linkMatch = entryContent.match(/<link href="([^"]*?)"/);
+    const url = linkMatch ? linkMatch[1] : "";
+    
+    const contentMatch = entryContent.match(/<content[^>]*?>([\s\S]*?)<\/content>/);
+    let rawContent = contentMatch ? contentMatch[1] : "";
+    const text = stripHTML(rawContent).substring(0, 1000);
+    
+    entries.push({
+      title,
+      url,
+      text
+    });
+  }
+  return entries;
+}
+
+async function crawlCategoryRSS(cat: any): Promise<any[]> {
+  let rawThreads: any[] = [];
+  
+  for (const sub of cat.subreddits) {
+    try {
+      const url = `https://www.reddit.com/r/${sub}/new/.rss`;
+      const response = await fetch(url, {
+        headers: { "User-Agent": "brew-ideas-hub/1.0" }
+      });
+      
+      if (response.ok) {
+        const xmlText = await response.text();
+        const parsed = parseRedditRSS(xmlText).slice(0, 10);
+        for (const t of parsed) {
+          rawThreads.push({
+            title: t.title,
+            text: t.text,
+            subreddit: sub,
+            url: t.url,
+            score: 1
+          });
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to crawl RSS for r/${sub}:`, err);
+    }
+  }
+  return rawThreads;
+}
+
 // 1. Register App Settings so moderators can save their Gemini API Key
 Devvit.addSettings([
   {
@@ -122,29 +196,8 @@ Devvit.addCustomPostType({
             return;
           }
 
-          console.log(`Natively crawling r/ subreddits for category: ${cat.name}`);
-          let rawThreads: any[] = [];
-          
-          for (const sub of cat.subreddits) {
-            try {
-              const posts = await context.reddit.getHotPosts({
-                subredditName: sub,
-                limit: 4
-              }).all();
-              
-              for (const post of posts) {
-                rawThreads.push({
-                  title: post.title,
-                  text: post.selftext ? post.selftext.substring(0, 800) : "",
-                  score: post.score,
-                  subreddit: sub,
-                  url: post.url
-                });
-              }
-            } catch (err) {
-              console.error(`Failed to crawl r/${sub}:`, err);
-            }
-          }
+          console.log(`Natively crawling RSS feeds for category: ${cat.name}`);
+          const rawThreads = await crawlCategoryRSS(cat);
 
           if (rawThreads.length === 0) {
             postMessage({
@@ -269,7 +322,7 @@ Devvit.addCustomPostType({
   }
 });
 
-// 4. Configure Scheduler job to fetch threads natively and update Gemini decodings
+// 4. Configure Scheduler job to fetch threads natively and update Gemini decodings (Round-Robin RSS)
 Devvit.addSchedulerJob({
   name: "refresh_ideas",
   onRun: async (event, context) => {
@@ -279,89 +332,80 @@ Devvit.addSchedulerJob({
       return;
     }
 
-    // Dynamic import to read category subreddits
     const categories = await import("./data/categories.json");
     
-    for (const cat of categories.default) {
-      console.log(`Natively crawling r/ subreddits for category: ${cat.name}`);
-      let rawThreads: any[] = [];
-      
-      // Fetch hot threads natively from the specified subreddits (no keys needed!)
-      for (const sub of cat.subreddits) {
-        try {
-          const posts = await context.reddit.getHotPosts({
-            subredditName: sub,
-            limit: 4
-          }).all();
-          
-          for (const post of posts) {
-            rawThreads.push({
-              title: post.title,
-              text: post.selftext ? post.selftext.substring(0, 800) : "",
-              score: post.score,
-              subreddit: sub,
-              url: post.url
-            });
-          }
-        } catch (err) {
-          console.error(`Failed to crawl r/${sub}:`, err);
-        }
-      }
+    // Retrieve current category index from Redis for round-robin scheduling
+    const indexStr = await context.kvStore.get("current_category_index");
+    let index = indexStr ? parseInt(indexStr, 10) : 0;
+    if (isNaN(index) || index < 0 || index >= categories.default.length) {
+      index = 0;
+    }
 
-      if (rawThreads.length === 0) continue;
+    const cat = categories.default[index];
+    console.log(`[Scheduler] Round-robin crawling category (${index + 1}/${categories.default.length}): ${cat.name}`);
 
-      // Compile prompt for Gemini API
-      const prompt = (
-        "Generate 6 distinct, startable Idea Cards based on these raw Reddit threads. "
-        "Each card must conform strictly to the Pydantic schema structure. "
-        "Do not frame things as complaints. Capture 'the tea' in a fun, encouraging tone.\n\n"
-        f"Input Threads:\n{JSON.stringify(rawThreads)}"
-      );
+    // Update the index for the next run
+    const nextIndex = (index + 1) % categories.default.length;
+    await context.kvStore.put("current_category_index", nextIndex.toString());
 
-      try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: {
-                responseMimeType: "application/json",
-                // Configure structured JSON schema expectations matching our card type
-                responseSchema: {
-                  type: "object",
-                  properties: {
-                    ideas: {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: {
-                          id: { type: "string" },
-                          category: { type: "string" },
-                          title: { type: "string" },
-                          tagline: { type: "string" },
-                          whatItIs: { type: "string" },
-                          momentum: { type: "string" },
-                          momentumScore: { type: "number" },
-                          momentumWhy: { type: "string" },
-                          difficulty: { type: "string" },
-                          whyNow: { type: "string" },
-                          theTea: { type: "string" },
-                          whoIsDoingIt: { type: "string" },
-                          gettingStarted: { type: "array", items: { type: "string" } },
-                          tags: { type: "array", items: { type: "string" } },
-                          sources: {
-                            type: "array",
-                            items: {
-                              type: "object",
-                              properties: {
-                                title: { type: "string" },
-                                url: { type: "string" },
-                                subreddit: { type: "string" },
-                                upvotes: { type: "number" },
-                                numComments: { type: "number" }
-                              }
+    // Crawl RSS threads natively (no Reddit OAuth keys needed)
+    const rawThreads = await crawlCategoryRSS(cat);
+    
+    if (rawThreads.length === 0) {
+      console.log(`[Scheduler] No RSS threads found for category ${cat.name}`);
+      return;
+    }
+
+    // Compile prompt for Gemini API
+    const prompt = (
+      "Generate 6 distinct, startable Idea Cards based on these raw Reddit threads. "
+      "Each card must conform strictly to the Pydantic schema structure. "
+      "Do not frame things as complaints. Capture 'the tea' in a fun, encouraging tone.\n\n"
+      `Input Threads:\n${JSON.stringify(rawThreads)}`
+    );
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              responseMimeType: "application/json",
+              responseSchema: {
+                type: "object",
+                properties: {
+                  ideas: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string" },
+                        category: { type: "string" },
+                        title: { type: "string" },
+                        tagline: { type: "string" },
+                        whatItIs: { type: "string" },
+                        momentum: { type: "string" },
+                        momentumScore: { type: "number" },
+                        momentumWhy: { type: "string" },
+                        difficulty: { type: "string" },
+                        whyNow: { type: "string" },
+                        theTea: { type: "string" },
+                        whoIsDoingIt: { type: "string" },
+                        gettingStarted: { type: "array", items: { type: "string" } },
+                        tags: { type: "array", items: { type: "string" } },
+                        sources: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            properties: {
+                              title: { type: "string" },
+                              url: { type: "string" },
+                              subreddit: { type: "string" },
+                              upvotes: { type: "number" },
+                              numComments: { type: "number" }
                             }
                           }
                         }
@@ -370,40 +414,44 @@ Devvit.addSchedulerJob({
                   }
                 }
               }
-            })
-          }
-        );
-
-        if (response.ok) {
-          const result = await response.json();
-          const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (text) {
-            try {
-              const parsed = JSON.parse(text);
-              const ideasList = parsed.ideas || parsed;
-              await context.kvStore.put(`brew-category-${cat.slug}`, JSON.stringify(ideasList));
-              console.log(`Updated ideas for ${cat.name} in Redis.`);
-            } catch (e) {
-              console.error(`Failed to parse/save ideas for ${cat.name}:`, e);
             }
+          })
+        }
+      );
+
+      if (response.ok) {
+        const result = await response.json();
+        const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          try {
+            const parsed = JSON.parse(text);
+            const ideasList = parsed.ideas || parsed;
+            await context.kvStore.put(`brew-category-${cat.slug}`, JSON.stringify(ideasList));
+            console.log(`Updated ideas for ${cat.name} in Redis.`);
+          } catch (e) {
+            console.error(`Failed to parse/save ideas for ${cat.name}:`, e);
           }
         }
-      } catch (err) {
-        console.error(`Failed to refresh ideas for ${cat.name} via Gemini:`, err);
       }
+    } catch (err) {
+      console.error(`Failed to refresh ideas for ${cat.name} via Gemini:`, err);
     }
   }
 });
 
-// 5. Trigger daily scheduler installation hook
+// 5. Trigger scheduler installation hook (Every 60 Seconds)
 Devvit.addTrigger({
   event: "AppInstall",
   onEvent: async (event, context) => {
-    await context.scheduler.runDaily({
-      name: "refresh_ideas",
-      time: "08:00"
-    });
-    console.log("Successfully scheduled daily refresh job at 08:00 AM.");
+    try {
+      await context.scheduler.runJob({
+        name: "refresh_ideas",
+        cron: "*/1 * * * *"
+      });
+      console.log("Successfully scheduled recurring 60-second ideas refresh job.");
+    } catch (e) {
+      console.error("Failed to schedule job on install:", e);
+    }
   }
 });
 
