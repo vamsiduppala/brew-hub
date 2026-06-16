@@ -81,7 +81,20 @@ To deploy Brew directly onto Reddit as a Custom Post Web App:
    npx devvit playtest <your_subreddit_name>
    ```
 
-When moderators install the app, the background trigger schedules a daily crawler that queries threads natively and refreshes the dashboard with zero server dependencies!
+### 🔄 Devvit-Native Scraping & Refresh Options
+
+Once playtesting or installed, you have three native ways to scrape Reddit and decode ideas without running any local Python code:
+
+1. **On-Demand Category Refresh (Inside WebView)**:
+   Navigate to any category page in your Web app and click the **"Refresh from Reddit"** button at the top right. This queries that category's subreddits, sends them to Gemini, and updates the local view immediately.
+2. **Manual Full Scrape (Subreddit Menu)**:
+   As a moderator, click the **`...` (three dots)** menu on your subreddit page and select **"Brew: Force Run Daily Scrape"**. This triggers the serverless scheduler job immediately on Reddit's servers to crawl and populate all 14 categories.
+   * To stream the scraping progress logs in real time in your terminal, run:
+     ```bash
+     npx devvit logs <your_subreddit_name>
+     ```
+3. **Daily Automatic Scrape**:
+   The app automatically registers a daily job that executes the crawl for all categories at 08:00 AM.
 
 ---
 
